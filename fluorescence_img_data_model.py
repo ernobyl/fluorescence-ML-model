@@ -16,9 +16,9 @@ from keras.src.legacy.preprocessing.image import ImageDataGenerator
 
 from plot_run_graph import plot_training_history
 
+tf.config.experimental_run_functions_eagerly(True)
 # Load Experimental Data (Simulated Dataset Example)
 data = pd.read_csv('fluorescence_experiment_data.csv')  # CSV with bacterial load, treatment time, and outcome
-tf.config.experimental_run_functions_eagerly(True)
 
 # Extract Features & Labels
 X = data[['fluorescence_intensity', 'treatment_time', 'drug_concentration']].values
@@ -36,15 +36,15 @@ predictions = rf_model.predict(X_test)
 rmse = np.sqrt(mean_squared_error(y_test, predictions))
 print(f'Random Forest RMSE: {rmse:.2f}')
 
-# # Create an ImageDataGenerator instance for data augmentation
-# datagen = ImageDataGenerator(
-#     rotation_range=30,     # Rotate images by up to 30 degrees
-#     width_shift_range=0.2, # Shift width by up to 20%
-#     height_shift_range=0.2,# Shift height by up to 20%
-#     brightness_range=[0.6, 1.4],  # Stronger brightness variation
-#     zoom_range=0.3,        # Zoom in/out by up to 30%
-#     horizontal_flip=True   # Randomly flip images horizontally
-# )
+# Create an ImageDataGenerator instance for data augmentation
+datagen = ImageDataGenerator(
+    rotation_range=30,     # Rotate images by up to 30 degrees
+    width_shift_range=0.2, # Shift width by up to 20%
+    height_shift_range=0.2,# Shift height by up to 20%
+    brightness_range=[0.6, 1.4],  # Stronger brightness variation
+    zoom_range=0.3,        # Zoom in/out by up to 30%
+    horizontal_flip=True   # Randomly flip images horizontally
+)
 
 # Load & Preprocess Fluorescence Images for CNN
 IMG_SIZE = 128
@@ -62,8 +62,8 @@ def load_images(folder):
 X_img, y_img = load_images('fluorescence_images')
 X_train_img, X_test_img, y_train_img, y_test_img = train_test_split(X_img, y_img, test_size=0.2, random_state=42)
 
-# # Fit the generator to the training images
-# datagen.fit(X_train_img)
+# Fit the generator to the training images
+datagen.fit(X_train_img)
 
 # Define & Train CNN Model
 cnn_model = Sequential([
@@ -77,17 +77,17 @@ cnn_model = Sequential([
     Dense(1, activation='sigmoid')  # Binary classification
 ])
 
-cnn_model.add(Dropout(0.3))  # Drop 30% of neurons during training
-optimizer = Adam(learning_rate=0.0001, clipnorm=1.0)
+cnn_model.add(Dropout(0.2))  # Drop 20% of neurons during training
+optimizer = Adam(learning_rate=0.0003, clipnorm=1.0)
 
 cnn_model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['accuracy'])
 history = cnn_model.fit(
-    #datagen.flow(X_train_img, y_train_img, batch_size=32),  # Use data generator
-    X_train_img,
-    y_train_img,
+    datagen.flow(X_train_img, y_train_img, batch_size=32),  # Use data generator
+    #X_train_img,
+    #y_train_img,
     validation_data=(X_test_img, y_test_img),
-    #steps_per_epoch = 100,
-    epochs=60
+    steps_per_epoch = 200,
+    epochs=20
 )
 
 plot_training_history(history, "run_results.png")
