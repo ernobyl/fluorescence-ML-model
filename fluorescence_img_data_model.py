@@ -16,7 +16,7 @@ from keras.src.legacy.preprocessing.image import ImageDataGenerator
 
 from plot_run_graph import plot_training_history
 
-# 1️⃣ Load Experimental Data (Simulated Dataset Example)
+# Load Experimental Data (Simulated Dataset Example)
 data = pd.read_csv('fluorescence_experiment_data.csv')  # CSV with bacterial load, treatment time, and outcome
 tf.config.experimental_run_functions_eagerly(True)
 
@@ -27,7 +27,7 @@ y = data['bacterial_reduction'].values  # Target variable
 # Train-Test Split
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# 2️⃣ Train a Random Forest Model for Predicting Bacterial Reduction
+# Train a Random Forest Model for Predicting Bacterial Reduction
 rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
 rf_model.fit(X_train, y_train)
 
@@ -46,7 +46,7 @@ print(f'Random Forest RMSE: {rmse:.2f}')
 #     horizontal_flip=True   # Randomly flip images horizontally
 # )
 
-# 3️⃣ Load & Preprocess Fluorescence Images for CNN
+# Load & Preprocess Fluorescence Images for CNN
 IMG_SIZE = 128
 def load_images(folder):
     images, labels = [], []
@@ -65,7 +65,7 @@ X_train_img, X_test_img, y_train_img, y_test_img = train_test_split(X_img, y_img
 # # Fit the generator to the training images
 # datagen.fit(X_train_img)
 
-# 4️⃣ Define & Train CNN Model
+# Define & Train CNN Model
 cnn_model = Sequential([
     Conv2D(32, (3, 3), activation='relu', input_shape=(IMG_SIZE, IMG_SIZE, 1)),
     MaxPooling2D(2, 2),
@@ -92,7 +92,7 @@ history = cnn_model.fit(
 
 plot_training_history(history, "run_results.png")
 
-# 5️⃣ Evaluate CNN Performance
+# Evaluate CNN Performance
 cnn_predictions = (cnn_model.predict(X_test_img) > 0.5).astype('int')
 accuracy = accuracy_score(y_test_img, cnn_predictions)
 cm = confusion_matrix(y_test_img, cnn_predictions)
