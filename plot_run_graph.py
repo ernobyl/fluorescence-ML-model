@@ -37,3 +37,24 @@ def plot_training_history(history, save_path="training_history.png"):
     plt.savefig(save_path)  # Save the graph as an image
     plt.show()
 
+def plot_training_history_torch(train_losses, train_accuracies, save_path="training_results.png"):
+    plt.figure(figsize=(12, 5))
+
+    # Plot loss
+    plt.subplot(1, 2, 1)
+    plt.plot(train_losses, label="Train Loss", color='blue')
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training Loss Over Epochs")
+    plt.legend()
+
+    # Plot accuracy
+    plt.subplot(1, 2, 2)
+    plt.plot(train_accuracies, label="Train Accuracy", color='green')
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy (%)")
+    plt.title("Training Accuracy Over Epochs")
+    plt.legend()
+
+    plt.savefig(save_path)
+    plt.show()

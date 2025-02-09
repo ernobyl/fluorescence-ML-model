@@ -1,26 +1,28 @@
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import cv2
-import os
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, accuracy_score, confusion_matrix
-import tensorflow as tf
-from tensorflow.python.keras.models import Sequential
-from tensorflow.python.keras.optimizer_v2.adam import Adam
-from tensorflow.python.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
-from keras.src.legacy.preprocessing.image import ImageDataGenerator
+from torchvision import models
+from plot_run_graph import plot_training_history_torch
 
-from plot_run_graph import plot_training_history
+# Check for GPU availability
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-tf.config.experimental_run_functions_eagerly(True)
 # Load Experimental Data (Simulated Dataset Example)
 data = pd.read_csv('s_data.csv')  # CSV with sample concentration, spore count
 
-# Extract Features & Labels
+# Extract Features & Labels for Random Forest
 X = data[['initial_amount', 'sample_concentration']].values
 y = data['spore_count'].values  # Target variable
 
@@ -36,67 +38,176 @@ predictions = rf_model.predict(X_test)
 rmse = np.sqrt(mean_squared_error(y_test, predictions))
 print(f'Random Forest RMSE: {rmse:.2f}')
 
-# # Create an ImageDataGenerator instance for data augmentation
-# datagen = ImageDataGenerator(
-#     rotation_range=30,     # Rotate images by up to 30 degrees
-#     width_shift_range=0.2, # Shift width by up to 20%
-#     height_shift_range=0.2,# Shift height by up to 20%
-#     brightness_range=[0.6, 1.4],  # Stronger brightness variation
-#     zoom_range=0.3,        # Zoom in/out by up to 30%
-#     horizontal_flip=True   # Randomly flip images horizontally
-# )
 
-# Load & Preprocess spore sample Images for CNN
+# ==============================
+# 🔄 PyTorch Dataset & DataLoader
+# ==============================
 IMG_SIZE = 128
-def load_images(folder):
-    images, labels = [], []
-    for label in ['spores', 'not_spores']:
-        path = os.path.join(folder, label)
-        for img_name in os.listdir(path):
-            img = cv2.imread(os.path.join(path, img_name), cv2.IMREAD_GRAYSCALE)
-            img = cv2.resize(img, (IMG_SIZE, IMG_SIZE)) / 255.0
-            images.append(img)
-            labels.append(0 if label == 'spores' else 1)  # Binary classification
-    return np.array(images).reshape(-1, IMG_SIZE, IMG_SIZE, 1), np.array(labels)
 
-X_img, y_img = load_images('s_images')
-X_train_img, X_test_img, y_train_img, y_test_img = train_test_split(X_img, y_img, test_size=0.2, random_state=42)
+# Define Custom Dataset
+class SporeDataset(Dataset):
+    def __init__(self, folder, transform=None):
+        self.transform = transform
+        self.data = []
+        self.labels = []
 
-# # Fit the generator to the training images
-# datagen.fit(X_train_img)
+        for label, class_name in enumerate(["spores", "not_spores"]):
+            class_path = os.path.join(folder, class_name)
+            for img_name in os.listdir(class_path):
+                img_path = os.path.join(class_path, img_name)
+                self.data.append(img_path)
+                self.labels.append(label)
 
-# Define & Train CNN Model
-cnn_model = Sequential([
-    Conv2D(32, (3, 3), activation='relu', input_shape=(IMG_SIZE, IMG_SIZE, 1)),
-    MaxPooling2D(2, 2),
-    Conv2D(64, (3, 3), activation='relu'),
-    MaxPooling2D(2, 2),
-    Flatten(),
-    Dense(128, activation='relu'),
-    Dropout(0.5),
-    Dense(1, activation='sigmoid')  # Binary classification
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        img_path = self.data[idx]
+        label = self.labels[idx]
+
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+        img = np.expand_dims(img, axis=0)  # Add channel dimension
+
+        if self.transform:
+            img = self.transform(torch.tensor(img, dtype=torch.float32))
+
+        return img, torch.tensor(label, dtype=torch.float32)
+
+# Define Transformations
+transform = transforms.Compose([
+    transforms.Lambda(lambda x: x / 255.0),  # Normalize images
 ])
 
-cnn_model.add(Dropout(0.2))  # Drop 20% of neurons during training
-optimizer = Adam(learning_rate=0.0003, clipnorm=1.0)
+# Load datasets
+dataset = SporeDataset("s_images", transform=transform)
+train_size = int(0.8 * len(dataset))
+test_size = len(dataset) - train_size
+train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
 
-cnn_model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['accuracy'])
-history = cnn_model.fit(
-    #datagen.flow(X_train_img, y_train_img, batch_size=32),  # Use data generator
-    X_train_img,
-    y_train_img,
-    validation_data=(X_test_img, y_test_img),
-    #steps_per_epoch = 200,
-    epochs=20
-)
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
-plot_training_history(history, "spore_run_results.png")
 
-# Evaluate CNN Performance
-cnn_predictions = (cnn_model.predict(X_test_img) > 0.5).astype('int')
-accuracy = accuracy_score(y_test_img, cnn_predictions)
-cm = confusion_matrix(y_test_img, cnn_predictions)
+# ==============================
+# 🔄 Define CNN Model in PyTorch
+# ==============================
+class CNN(nn.Module):
+    def __init__(self):
+        super(CNN, self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(64 * (IMG_SIZE // 4) * (IMG_SIZE // 4), 128)
+        self.dropout = nn.Dropout(0.5)
+        self.fc2 = nn.Linear(128, 1)
+        self.sigmoid = nn.Sigmoid()  # Sigmoid for binary classification
 
-print(f'CNN Accuracy: {accuracy * 100:.2f}%')
-sns.heatmap(cm, annot=True, fmt='d')
-plt.show()
+    def forward(self, x):
+        x = self.pool(torch.relu(self.conv1(x)))
+        x = self.pool(torch.relu(self.conv2(x)))
+        x = self.flatten(x)
+        x = torch.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.sigmoid(self.fc2(x))
+        return x
+
+# Instantiate the model
+cnn_model = CNN().to(device)
+optimizer = optim.Adam(cnn_model.parameters(), lr=0.0003)
+criterion = nn.BCELoss()
+
+
+# ==============================
+# 🔄 Train CNN Model
+# ==============================
+
+# Initialize lists to store loss and accuracy
+train_losses = []
+train_accuracies = []
+
+EPOCHS = 100
+
+for epoch in range(EPOCHS):
+    cnn_model.train()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    for images, labels in train_loader:
+        images, labels = images.to(device), labels.to(device)
+
+        optimizer.zero_grad()
+        outputs = cnn_model(images).squeeze()
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item()
+        predicted = (outputs > 0.5).float()
+        correct += (predicted == labels).sum().item()
+        total += labels.size(0)
+
+    # Store loss and accuracy
+    train_loss = running_loss / len(train_loader)
+    train_accuracy = 100 * correct / total
+    train_losses.append(train_loss)
+    train_accuracies.append(train_accuracy)
+
+    print(f"Epoch [{epoch+1}/{EPOCHS}], Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.2f}%")
+
+
+# ==============================
+# 🔄 Evaluate CNN Performance
+# ==============================
+cnn_model.eval()
+all_preds = []
+all_labels = []
+
+with torch.no_grad():
+    for images, labels in test_loader:
+        images, labels = images.to(device), labels.to(device)
+        outputs = cnn_model(images).squeeze()
+        predicted = (outputs > 0.5).float()
+
+        all_preds.extend(predicted.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
+
+# Convert to NumPy arrays
+all_preds = np.array(all_preds)
+all_labels = np.array(all_labels)
+
+# Count correctly classified images for each category
+correct_spores = np.sum((all_preds == 0) & (all_labels == 0))  # True Positives (spores classified as spores)
+correct_not_spores = np.sum((all_preds == 1) & (all_labels == 1))  # True Negatives (not_spores classified as not_spores)
+
+# Count misclassified images
+wrong_spores = np.sum((all_preds == 1) & (all_labels == 0))  # False Negatives (spores misclassified as not_spores)
+wrong_not_spores = np.sum((all_preds == 0) & (all_labels == 1))  # False Positives (not_spores misclassified as spores)
+
+# Create summary DataFrame
+summary_table = pd.DataFrame({
+    "Category": ["Spores", "Not Spores"],
+    "Correctly Classified": [correct_spores, correct_not_spores],
+    "Misclassified": [wrong_spores, wrong_not_spores],
+    "Total": [correct_spores + wrong_spores, correct_not_spores + wrong_not_spores],
+    "Accuracy (%)": [
+        100 * correct_spores / (correct_spores + wrong_spores) if (correct_spores + wrong_spores) > 0 else 0,
+        100 * correct_not_spores / (correct_not_spores + wrong_not_spores) if (correct_not_spores + wrong_not_spores) > 0 else 0
+    ]
+})
+
+# Print summary table
+print("\nClassification Summary:")
+print(summary_table)
+
+plot_training_history_torch(train_losses, train_accuracies, "spore_run_results.png")
+
+# # Compute accuracy
+# accuracy = accuracy_score(all_labels, all_preds)
+# cm = confusion_matrix(all_labels, all_preds)
+
+# print(f'CNN Accuracy: {accuracy * 100:.2f}%')
+# sns.heatmap(cm, annot=True, fmt='d')
+# plt.show()

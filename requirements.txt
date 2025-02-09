@@ -5,3 +5,6 @@ seaborn
 opencv-python
 scikit-learn
 tensorflow
+torch
+torchvision
+torchaudio
